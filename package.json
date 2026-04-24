@@ -1,0 +1,21 @@
+{
+  "name": "lexio",
+  "version": "1.0.0",
+  "description": "A contextual language learning app with vocabulary tracking, flashcards, and reading practice",
+  "private": true,
+  "scripts": {
+    "install-all": "npm install && cd server && npm install && cd ../web && npm install && cd ..",
+    "predev": "pkill -f 'vite' || true && pkill -f 'node dist/server.js' || true",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "cd server && npm run build",
+    "build:web": "cd web && npm run build",
+    "server": "cd server && npm start",
+    "web": "cd web && npm run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

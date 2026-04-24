@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+
+html,
+body {
+  background-color: #1a1a1a;
+  color: #e0e0e0;
+}
+
+#root {
+  display: flex;
+  height: 100vh;
+}
+
+* {
+  scrollbar-color: #3a3a3a #1a1a1a;
+  scrollbar-width: thin;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+a {
+  @apply text-green-400 hover:text-green-300 transition-colors;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1);
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Hover scale-up without layout shift.
+   inline-block + vertical-align:baseline keeps punctuation on the same baseline.
+   transform:scale affects only visual rendering — surrounding text never reflows. */
+.word-hover {
+  display: inline-block;
+  vertical-align: baseline;
+  transition: transform 0.1s ease;
+  transform-origin: center bottom;
+}
+.word-hover:hover {
+  transform: scale(1.05);
+}
+
+/* Flashcard entrance animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeInUp 0.25s ease-out both;
+}
