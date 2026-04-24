@@ -2,6 +2,10 @@
 
 A privacy-first language learning tool for reading real-world content, tracking vocabulary with spaced-repetition flashcards, and visualizing your word knowledge with an interactive frequency heatmap.
 
+![Lexio screenshot 1](images/lexio1.webp)
+![Lexio screenshot 2](images/lexio2.webp)
+![Lexio screenshot 3](images/lexio3.webp)
+
 ## Features
 
 - **RSS Feed Reader**: Curated RSS feeds in 6 languages — article text comes from RSS-provided content (legally provided by publishers for syndication)
@@ -173,6 +177,7 @@ French elisions (`d'abord`, `l'éco`) are split on `/['’]/` — the clitic pre
 ### Lemmatization
 
 When a flashcard is saved, `fetchLemma` calls `GET /api/tokenize?text=<word>&lang=<lang>`:
+
 - **Japanese** (`ja`): kuromoji returns `basic_form` — the exact dictionary form (e.g. `食べた` → `食べる`)
 - **English** (`en`): Porter stemmer (e.g. `running` → `run`)
 - **French** (`fr`), **Spanish** (`es`), **Portuguese** (`pt-BR`): language-specific Porter stemmers
@@ -201,15 +206,15 @@ Word spans use `box-shadow: inset 0 0 0 Npx <color>` for colored outlines. Inset
 
 `Flashcards.tsx` implements the SM-2 algorithm. Key fields on `Flashcard`:
 
-| Field          | Type      | Description                                                        |
-| -------------- | --------- | ------------------------------------------------------------------ |
-| `lemma`        | `string?` | Dictionary/base form (populated by `/api/tokenize`)               |
-| `difficulty`   | `string?` | Last self-rating: `"again"`, `"hard"`, `"good"`, `"easy"`          |
-| `easeFactor`   | `number`  | SM-2 ease factor, clamped to [1.3, 3.0], default 2.5              |
-| `interval`     | `number`  | Current review interval in days                                    |
-| `nextReview`   | `number`  | Timestamp (ms) when card is next due                               |
-| `lastReviewed` | `number`  | Timestamp (ms) of last review                                      |
-| `contexts`     | `array`   | Sentence examples with translation, POS data, source title/URL    |
+| Field          | Type      | Description                                                    |
+| -------------- | --------- | -------------------------------------------------------------- |
+| `lemma`        | `string?` | Dictionary/base form (populated by `/api/tokenize`)            |
+| `difficulty`   | `string?` | Last self-rating: `"again"`, `"hard"`, `"good"`, `"easy"`      |
+| `easeFactor`   | `number`  | SM-2 ease factor, clamped to [1.3, 3.0], default 2.5           |
+| `interval`     | `number`  | Current review interval in days                                |
+| `nextReview`   | `number`  | Timestamp (ms) when card is next due                           |
+| `lastReviewed` | `number`  | Timestamp (ms) of last review                                  |
+| `contexts`     | `array`   | Sentence examples with translation, POS data, source title/URL |
 
 ### WPM Tracking
 
@@ -218,6 +223,7 @@ The Reader starts a timer when an article finishes loading. A `⏱ mm:ss` badge 
 ### Offline / PWA
 
 `vite-plugin-pwa` generates a Service Worker (Workbox) that precaches the app shell and applies runtime caching:
+
 - Wikipedia responses: NetworkFirst, 24h TTL, max 50 entries
 - RSS feed responses: NetworkFirst, 30m TTL, max 30 entries
 
@@ -231,21 +237,21 @@ The app is installable via "Add to Home Screen" on iOS/Android and "Install" in 
 
 All data lives in the browser's IndexedDB via Dexie (current version: **15**).
 
-| Table              | Primary Key               | Indexed Fields                          | Purpose                                                          |
-| ------------------ | ------------------------- | --------------------------------------- | ---------------------------------------------------------------- |
-| `appSettings`      | `id`                      | —                                       | Language order, translation targets, excluded words, Pomodoro   |
-| `flashcards`       | `++id`                    | `lang`, `word`, `nextReview`, `lemma`   | Word cards with contexts, SM-2 metadata, and lemma              |
-| `wordCounts`       | `langWord` (`lang\|word`) | `lang`, `count`                         | Per-language word frequency                                      |
-| `knownWords`       | `++id`                    | `lang`, `word`, `confidence`            | Known and vague words                                            |
-| `manualTexts`      | `++id`                    | `lang`, `addedAt`                       | User-saved manual texts                                          |
-| `bookmarks`        | `++id`                    | `url`, `lang`                           | Bookmarked article URLs                                          |
-| `readingHistory`   | `++id`                    | `lang`, `readAt`                        | Recently read articles (includes `wpm` and `readingDuration`)   |
-| `cachedArticles`   | `++id`                    | `url`                                   | Offline article cache (max 30, auto-evicts oldest)              |
-| `translationCache` | `++id`                    | `cacheKey`                              | Client-side translation cache                                    |
-| `customFeeds`      | `++id`                    | `lang`                                  | User-added custom RSS feeds                                      |
-| `favoriteSites`    | `++id`                    | `lang`                                  | Favorited sites                                                  |
-| `users`            | `++id`                    | `&email` (unique)                       | Local user accounts                                             |
-| `studySessions`    | `++id`                    | `lang`, `start`                         | Pomodoro / study session records                                |
+| Table              | Primary Key               | Indexed Fields                        | Purpose                                                       |
+| ------------------ | ------------------------- | ------------------------------------- | ------------------------------------------------------------- |
+| `appSettings`      | `id`                      | —                                     | Language order, translation targets, excluded words, Pomodoro |
+| `flashcards`       | `++id`                    | `lang`, `word`, `nextReview`, `lemma` | Word cards with contexts, SM-2 metadata, and lemma            |
+| `wordCounts`       | `langWord` (`lang\|word`) | `lang`, `count`                       | Per-language word frequency                                   |
+| `knownWords`       | `++id`                    | `lang`, `word`, `confidence`          | Known and vague words                                         |
+| `manualTexts`      | `++id`                    | `lang`, `addedAt`                     | User-saved manual texts                                       |
+| `bookmarks`        | `++id`                    | `url`, `lang`                         | Bookmarked article URLs                                       |
+| `readingHistory`   | `++id`                    | `lang`, `readAt`                      | Recently read articles (includes `wpm` and `readingDuration`) |
+| `cachedArticles`   | `++id`                    | `url`                                 | Offline article cache (max 30, auto-evicts oldest)            |
+| `translationCache` | `++id`                    | `cacheKey`                            | Client-side translation cache                                 |
+| `customFeeds`      | `++id`                    | `lang`                                | User-added custom RSS feeds                                   |
+| `favoriteSites`    | `++id`                    | `lang`                                | Favorited sites                                               |
+| `users`            | `++id`                    | `&email` (unique)                     | Local user accounts                                           |
+| `studySessions`    | `++id`                    | `lang`, `start`                       | Pomodoro / study session records                              |
 
 When adding new fields, bump the version constant and add a `.upgrade()` migration.
 

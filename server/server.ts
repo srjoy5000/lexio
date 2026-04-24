@@ -2,9 +2,10 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import Parser from "rss-parser";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 const kuromoji = require("kuromoji");
-import { PorterStemmer, PorterStemmerFr, PorterStemmerEs, PorterStemmerPt } from 'natural';
+const { PorterStemmer, PorterStemmerFr, PorterStemmerEs, PorterStemmerPt } = require('natural');
 
 dotenv.config();
 
