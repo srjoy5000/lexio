@@ -100,6 +100,13 @@ export interface ManualText {
   body: string;
   lang: string;
   addedAt: number;
+  folderId?: number;
+}
+
+export interface TextFolder {
+  id?: number;
+  name: string;
+  addedAt: number;
 }
 
 export interface FavoriteSite {
@@ -172,6 +179,7 @@ export class PolyglotDB extends Dexie {
   cachedArticles!: Table<CachedArticle>;
   users!: Table<User>;
   studySessions!: Table<StudySession>;
+  textFolders!: Table<TextFolder>;
 
   constructor() {
     super('PolyglotContextReaderDB');
@@ -347,6 +355,23 @@ export class PolyglotDB extends Dexie {
       cachedArticles: '++id, url',
       users: '++id, &email',
       studySessions: '++id, lang, start',
+    });
+    // Version 16: TextFolder table + folderId index on manualTexts
+    this.version(16).stores({
+      flashcards: '++id, lang, word, nextReview, lemma',
+      wordCounts: 'langWord, lang, count',
+      appSettings: 'id',
+      customFeeds: '++id, lang',
+      bookmarks: '++id, url, lang',
+      manualTexts: '++id, lang, addedAt, folderId',
+      favoriteSites: '++id, lang',
+      translationCache: '++id, cacheKey',
+      knownWords: '++id, lang, word, confidence',
+      readingHistory: '++id, lang, readAt',
+      cachedArticles: '++id, url',
+      users: '++id, &email',
+      studySessions: '++id, lang, start',
+      textFolders: '++id, addedAt',
     });
   }
 }

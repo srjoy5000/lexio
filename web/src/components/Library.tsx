@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, ManualText, FavoriteSite } from "../db";
+import { db, ManualText, FavoriteSite, TextFolder } from "../db";
 import { API_BASE } from "../lib/api";
 import { LANGUAGES } from "../lib/types";
 import { LANGUAGE_NAMES } from "../lib/constants";
 import { detectLangFromUrl } from "../lib/utils";
 import {
-  ChevronLeft, Trash2, Edit2, Check, X, Search,
+  ChevronLeft, ChevronDown, Trash2, Edit2, Check, X, Search,
   FileText, Globe, Plus, ExternalLink, RefreshCw,
+  Folder, FolderOpen, FolderPlus, FolderX, FolderMinus, Pencil,
 } from "lucide-react";
 
 interface LibraryProps {
@@ -30,11 +31,22 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editState, setEditState] = useState<EditState>({ title: "", url: "", body: "" });
 
+  // ── Folder state ──────────────────────────────────────────────────────
+  const [folders, setFolders] = useState<TextFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<number | null | "all">("all");
+  const [renamingFolderId, setRenamingFolderId] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [openMoveMenuId, setOpenMoveMenuId] = useState<number | null>(null);
+
   useEffect(() => { loadTexts(); }, []);
 
   const loadTexts = async () => {
     const all = await db.manualTexts.orderBy("addedAt").reverse().toArray();
+    const allFolders = await db.textFolders.orderBy("addedAt").toArray();
     setTexts(all);
+    setFolders(allFolders);
   };
 
   const handleDeleteText = async (id?: number) => {
@@ -58,11 +70,58 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
     await loadTexts();
   };
 
-  const filteredTexts = texts.filter(
+  const folderFilteredTexts =
+    selectedFolderId === "all"
+      ? texts
+      : selectedFolderId === null
+        ? texts.filter((t) => !t.folderId)
+        : texts.filter((t) => t.folderId === selectedFolderId);
+
+  const filteredTexts = folderFilteredTexts.filter(
     (t) =>
       t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.body.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+
+  // ── Folder CRUD ───────────────────────────────────────────────────────
+  const createFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    await db.textFolders.add({ name, addedAt: Date.now() });
+    setNewFolderName("");
+    setShowNewFolderInput(false);
+    await loadTexts();
+  };
+
+  const renameFolder = async (id: number) => {
+    const name = renameDraft.trim();
+    if (!name) { setRenamingFolderId(null); return; }
+    await db.textFolders.update(id, { name });
+    setRenamingFolderId(null);
+    await loadTexts();
+  };
+
+  const deleteFolder = async (id: number) => {
+    if (!window.confirm("Delete this folder? Texts inside will become unfiled.")) return;
+    const textsInFolder = texts.filter((t) => t.folderId === id);
+    await Promise.all(textsInFolder.map((t) => db.manualTexts.update(t.id!, { folderId: undefined })));
+    await db.textFolders.delete(id);
+    if (selectedFolderId === id) setSelectedFolderId("all");
+    await loadTexts();
+  };
+
+  const moveText = async (textId: number, folderId: number | undefined) => {
+    await db.manualTexts.update(textId, { folderId });
+    setOpenMoveMenuId(null);
+    await loadTexts();
+  };
+
+  useEffect(() => {
+    if (openMoveMenuId === null) return;
+    const close = () => setOpenMoveMenuId(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [openMoveMenuId]);
 
   // ── Websites state ───────────────────────────────────────────────────
   const [newUrl, setNewUrl] = useState(() => localStorage.getItem("wb.newUrl") || "");
@@ -202,7 +261,94 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
 
         {/* ── Texts Tab ── */}
         {tab === "texts" && (
-          filteredTexts.length === 0 ? (
+          <>
+          {/* Folder filter chips */}
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button onClick={() => setSelectedFolderId("all")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                selectedFolderId === "all"
+                  ? "bg-green-600 text-white border-green-600"
+                  : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
+              }`}>
+              All <span className="text-[10px] font-black opacity-70">({texts.length})</span>
+            </button>
+
+            {folders.length > 0 && (
+              <button onClick={() => setSelectedFolderId(null)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                  selectedFolderId === null
+                    ? "bg-green-600 text-white border-green-600"
+                    : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
+                }`}>
+                <Folder size={13} /> Unfiled
+                <span className="text-[10px] font-black opacity-70">({texts.filter((t) => !t.folderId).length})</span>
+              </button>
+            )}
+
+            {folders.map((folder) =>
+              renamingFolderId === folder.id ? (
+                <span key={folder.id} className="flex items-center gap-1">
+                  <input autoFocus value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") renameFolder(folder.id!); if (e.key === "Escape") setRenamingFolderId(null); }}
+                    onBlur={() => renameFolder(folder.id!)}
+                    className="px-2 py-1 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-28" />
+                  <button onClick={() => setRenamingFolderId(null)}
+                    className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white">
+                    <X size={12} />
+                  </button>
+                </span>
+              ) : (
+                <span key={folder.id} className="relative flex items-center group">
+                  <button onClick={() => setSelectedFolderId(folder.id!)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                      selectedFolderId === folder.id
+                        ? "bg-green-600 text-white border-green-600"
+                        : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
+                    }`}>
+                    <FolderOpen size={13} />
+                    {folder.name}
+                    <span className="text-[10px] font-black opacity-70">({texts.filter((t) => t.folderId === folder.id).length})</span>
+                  </button>
+                  <span className="hidden group-hover:flex items-center gap-0.5 ml-0.5">
+                    <button title="Rename" onClick={() => { setRenamingFolderId(folder.id!); setRenameDraft(folder.name); }}
+                      className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors">
+                      <Pencil size={11} />
+                    </button>
+                    <button title="Delete folder" onClick={() => deleteFolder(folder.id!)}
+                      className="p-1 rounded-full text-gray-400 hover:text-red-500 transition-colors">
+                      <FolderX size={11} />
+                    </button>
+                  </span>
+                </span>
+              )
+            )}
+
+            {showNewFolderInput ? (
+              <span className="flex items-center gap-1">
+                <input autoFocus value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") { setShowNewFolderInput(false); setNewFolderName(""); } }}
+                  placeholder="Folder name"
+                  className="px-3 py-1.5 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-36" />
+                <button onClick={createFolder}
+                  className="p-1.5 rounded-full bg-green-600 text-white hover:bg-green-700 transition-colors">
+                  <Check size={12} />
+                </button>
+                <button onClick={() => { setShowNewFolderInput(false); setNewFolderName(""); }}
+                  className="p-1.5 rounded-full bg-gray-200 dark:bg-dark-hover text-gray-600 dark:text-white hover:bg-gray-300 transition-colors">
+                  <X size={12} />
+                </button>
+              </span>
+            ) : (
+              <button onClick={() => setShowNewFolderInput(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border border-dashed border-gray-300 dark:border-dark-hover text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors">
+                <FolderPlus size={13} /> New Folder
+              </button>
+            )}
+          </div>
+
+          {filteredTexts.length === 0 ? (
             <div className="rounded-3xl border border-gray-200 dark:border-dark-hover bg-gray-50 dark:bg-dark-surface p-12 text-center text-gray-500 dark:text-dark-muted">
               {texts.length === 0
                 ? "No saved texts. Use \"Add Text\" or paste in the Reader to save."
@@ -210,7 +356,7 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
             </div>
           ) : (
             filteredTexts.map((text) => (
-              <div key={text.id} className="rounded-2xl border border-gray-200 dark:border-dark-hover bg-white dark:bg-dark-surface shadow-sm overflow-hidden">
+              <div key={text.id} className="rounded-2xl border border-gray-200 dark:border-dark-hover bg-white dark:bg-dark-surface shadow-sm">
                 {editingId === text.id ? (
                   <div className="p-6 space-y-3">
                     <input value={editState.title}
@@ -273,17 +419,60 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 leading-relaxed">{text.body}</p>
                     </div>
-                    <div className="px-5 pb-4">
+                    <div className="px-5 pb-4 flex items-center gap-2 flex-wrap">
                       <button onClick={() => onOpenText(text.body, text.title, text.url)}
                         className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-all shadow-sm shadow-green-600/20">
                         Open in Reader
                       </button>
+
+                      {/* Move-to-folder dropdown */}
+                      <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => setOpenMoveMenuId(openMoveMenuId === text.id ? null : (text.id ?? null))}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 dark:bg-dark-hover text-gray-600 dark:text-dark-muted hover:text-gray-900 dark:hover:text-white rounded-lg text-sm font-bold transition-colors border border-gray-200 dark:border-dark-hover">
+                          <Folder size={13} />
+                          {text.folderId
+                            ? (folders.find((f) => f.id === text.folderId)?.name ?? "Folder")
+                            : "Move to"}
+                          <ChevronDown size={13} />
+                        </button>
+
+                        {openMoveMenuId === text.id && (
+                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-hover rounded-xl shadow-lg overflow-hidden">
+                            {text.folderId && (
+                              <button onClick={() => moveText(text.id!, undefined)}
+                                className="w-full text-left px-4 py-2.5 text-sm text-gray-600 dark:text-dark-muted hover:bg-gray-50 dark:hover:bg-dark-hover flex items-center gap-2 transition-colors">
+                                <FolderMinus size={13} /> Remove from folder
+                              </button>
+                            )}
+                            {folders.length > 0 && <hr className="border-gray-100 dark:border-dark-hover" />}
+                            {folders.map((folder) => (
+                              <button key={folder.id} onClick={() => moveText(text.id!, folder.id!)}
+                                className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                                  text.folderId === folder.id
+                                    ? "text-green-600 font-bold bg-green-50 dark:bg-green-900/10"
+                                    : "text-gray-700 dark:text-dark-text hover:bg-gray-50 dark:hover:bg-dark-hover"
+                                }`}>
+                                <FolderOpen size={13} />
+                                {folder.name}
+                                {text.folderId === folder.id && <Check size={12} className="ml-auto" />}
+                              </button>
+                            ))}
+                            {folders.length === 0 && (
+                              <div className="px-4 py-3 text-xs text-gray-400 dark:text-dark-muted italic">
+                                No folders yet — create one above
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
             ))
-          )
+          )}
+          </>
         )}
 
         {/* ── Websites Tab ── */}
