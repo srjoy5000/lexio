@@ -240,7 +240,9 @@ export default function Reader({
   // Reading position — caret marker tracking
   const [savedScrollRatio, setSavedScrollRatio] = useState<number | null>(null);
   const [markerTop, setMarkerTop] = useState<number | null>(null);
-  const resumeMarkerRef = useRef<HTMLDivElement>(null);
+  const [isCaretPlacementMode, setIsCaretPlacementMode] = useState(false);
+  // Tracks mouse Y position inside the content area for the "m" shortcut
+  const mousePosInContentRef = useRef(-1);
 
   /** Schedule setSaveStatus(null) after `ms` ms, cancelling any pending clear. */
   const scheduleSaveStatusClear = useCallback(
@@ -278,6 +280,20 @@ export default function Reader({
     if (posKey) await db.readingPositions.delete(posKey);
     setSavedScrollRatio(null);
     setMarkerTop(null);
+  };
+
+  /** Place the caret marker at a given absolute Y pixel within the scroll content. */
+  const placeCaretAt = (absoluteTop: number) => {
+    if (!contentAreaRef.current) return;
+    const { scrollHeight } = contentAreaRef.current;
+    if (scrollHeight < 100) return;
+    const top = Math.max(0, absoluteTop);
+    setMarkerTop(top);
+    const ratio = top / scrollHeight;
+    setSavedScrollRatio(ratio);
+    const posKey = getPositionKey();
+    if (posKey) db.readingPositions.put({ url: posKey, scrollRatio: ratio, savedAt: Date.now() });
+    setIsCaretPlacementMode(false);
   };
 
   const handleBack = () => {
@@ -560,14 +576,35 @@ export default function Reader({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const words = navigableWordsRef.current;
-      if (!words.length) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // Enter — trigger translation of the currently selected word
+      if (e.key === "Enter" && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        if (selectedWord) {
+          e.preventDefault();
+          handleTranslateOnly();
+        }
+        return;
+      }
+
+      // m — place reading caret at current mouse position in the content area
+      if (e.key === "m" && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        if (mousePosInContentRef.current >= 0) {
+          e.preventDefault();
+          placeCaretAt(mousePosInContentRef.current);
+        }
+        return;
+      }
+
+      // Arrow-key word traversal + Escape
+      const words = navigableWordsRef.current;
+      if (!words.length) return;
       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Escape")
         return;
       e.preventDefault();
       if (e.key === "Escape") {
+        setIsCaretPlacementMode(false);
         setSelectedWord(null);
         return;
       }
@@ -1044,8 +1081,10 @@ export default function Reader({
           <span key={wordIdx} className="inline">
             <span
               data-word={token}
-              className={`word-hover transition-colors rounded cursor-pointer ${isTitle ? "px-[1px]" : "px-0.5"} ${
-                shouldHighlight
+              className={`word-hover transition-colors rounded ${isCaretPlacementMode ? "cursor-crosshair" : "cursor-pointer"} ${isTitle ? "px-[1px]" : "px-0.5"} ${
+                isCaretPlacementMode
+                  ? "hover:outline hover:outline-2 hover:outline-amber-400/60"
+                  : shouldHighlight
                   ? "hover:opacity-90"
                   : "hover:bg-gray-100 dark:hover:bg-dark-hover"
               }`}
@@ -1059,6 +1098,16 @@ export default function Reader({
                 if (e.shiftKey) e.preventDefault();
               }}
               onClick={(e) => {
+                // Caret placement mode: place marker at this word's position
+                if (isCaretPlacementMode) {
+                  e.stopPropagation();
+                  const wordEl = e.currentTarget;
+                  const wordRect = wordEl.getBoundingClientRect();
+                  const contentRect = contentAreaRef.current!.getBoundingClientRect();
+                  const scrollTop = contentAreaRef.current!.scrollTop;
+                  placeCaretAt(scrollTop + (wordRect.top - contentRect.top));
+                  return;
+                }
                 const cleaned = token.replace(/[.,!?;:()]/g, "").trim();
                 if (e.shiftKey && e.altKey) {
                   e.preventDefault();
@@ -1078,6 +1127,13 @@ export default function Reader({
                 if (e.ctrlKey || e.metaKey) {
                   e.preventDefault();
                   if (cleaned) handleDoubleClickWord(cleaned, clickSentence);
+                  return;
+                }
+                // Toggle deselect: clicking an already-selected word clears it
+                const cleanedLower = cleaned.toLowerCase();
+                if (cleanedLower && cleanedLower === selectedWord?.toLowerCase()) {
+                  setSelectedWord(null);
+                  setSelectedSentence(null);
                   return;
                 }
                 handleWordClick(token, clickSentence, e.clientX, e.clientY);
@@ -1152,6 +1208,7 @@ export default function Reader({
       selectedWord,
       settings,
       isDarkMode,
+      isCaretPlacementMode,
     ],
   );
 
@@ -1175,6 +1232,7 @@ export default function Reader({
       isDarkMode,
       isFallbackMode,
       manualLang,
+      isCaretPlacementMode,
     ],
   );
 
@@ -1227,6 +1285,17 @@ export default function Reader({
                   <ThumbsUp size={13} /> {learnedTodayCount} learned today
                 </div>
               )}
+            <button
+              onClick={() => setIsCaretPlacementMode((m) => !m)}
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition-all ${
+                isCaretPlacementMode
+                  ? "bg-amber-500 text-white border-amber-500 animate-pulse"
+                  : "bg-gray-100 dark:bg-dark-hover text-gray-600 dark:text-white border-gray-200 dark:border-dark-hover hover:bg-gray-200 dark:hover:bg-dark-surface"
+              }`}
+              title={isCaretPlacementMode ? "Click any word to drop the caret there — Esc to cancel" : "Manually place the reading caret"}
+            >
+              <MapPin size={13} /> {isCaretPlacementMode ? "Click a word…" : "Place Caret"}
+            </button>
             {markerTop !== null && (
               <button
                 onClick={() => {
@@ -1255,29 +1324,47 @@ export default function Reader({
       >
         {/* Article content area */}
         <div
-          className="lg:flex-1 lg:h-full overflow-y-auto px-8 lg:px-16 pt-8 pb-24 relative"
+          className={`lg:flex-1 lg:h-full overflow-y-auto px-8 lg:px-16 pt-8 pb-24 relative${isCaretPlacementMode ? " cursor-crosshair" : ""}`}
           ref={contentAreaRef}
           onMouseUp={handleReaderMouseUp}
+          onMouseMove={(e) => {
+            if (!contentAreaRef.current) return;
+            const rect = contentAreaRef.current.getBoundingClientRect();
+            mousePosInContentRef.current =
+              contentAreaRef.current.scrollTop + (e.clientY - rect.top);
+          }}
+          onClick={(e) => {
+            if (!isCaretPlacementMode || !contentAreaRef.current) return;
+            // Word spans handle their own click; only catch clicks on non-word areas
+            if ((e.target as Element).closest("[data-word]")) return;
+            const contentRect = contentAreaRef.current.getBoundingClientRect();
+            const scrollTop = contentAreaRef.current.scrollTop;
+            placeCaretAt(scrollTop + (e.clientY - contentRect.top));
+          }}
         >
-          {/* Reading position caret — absolutely placed at saved scroll offset */}
+          {/* Reading position caret — vertical green bar at left margin */}
           {markerTop !== null && (
             <div
-              ref={resumeMarkerRef}
-              style={{ position: "absolute", top: markerTop, left: 0, right: 0, zIndex: 10, pointerEvents: "none" }}
-              className="flex items-center"
+              style={{ position: "absolute", top: markerTop, left: 0, zIndex: 10, pointerEvents: "none" }}
+              className="flex items-start"
             >
-              <div className="flex-1 border-t-2 border-dashed border-green-500/60" />
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 mx-2 text-[11px] font-bold text-green-600 dark:text-green-400 bg-white dark:bg-dark-bg border border-green-400/50 rounded-full whitespace-nowrap shadow-sm" style={{ pointerEvents: "auto" }}>
-                <MapPin size={10} /> Resume here
-                <button
-                  onClick={clearReadingPosition}
-                  className="ml-1 opacity-50 hover:opacity-100 leading-none"
-                  title="Clear position marker"
-                >
-                  ×
-                </button>
-              </span>
-              <div className="flex-1 border-t-2 border-dashed border-green-500/60" />
+              {/* Flag label above the bar */}
+              <div style={{ pointerEvents: "auto" }}>
+                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-t rounded-br whitespace-nowrap shadow leading-tight">
+                  <MapPin size={8} /> Resume
+                  <button
+                    onClick={clearReadingPosition}
+                    className="ml-0.5 opacity-70 hover:opacity-100 leading-none"
+                    title="Clear position marker"
+                  >
+                    ×
+                  </button>
+                </div>
+                {/* Vertical bar */}
+                <div
+                  style={{ width: 2, height: `${Math.round(fontSize * 1.6)}px`, background: "#22c55e", borderRadius: 1 }}
+                />
+              </div>
             </div>
           )}
           {loading ? (
@@ -1769,6 +1856,18 @@ export default function Reader({
                     ← →
                   </kbd>{" "}
                   Navigate words
+                </div>
+                <div>
+                  <kbd className="bg-gray-200 dark:bg-dark-hover px-1 rounded text-[10px]">
+                    Enter
+                  </kbd>{" "}
+                  Translate selected
+                </div>
+                <div>
+                  <kbd className="bg-gray-200 dark:bg-dark-hover px-1 rounded text-[10px]">
+                    m
+                  </kbd>{" "}
+                  Drop caret at cursor
                 </div>
               </div>
             </div>
