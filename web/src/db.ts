@@ -107,6 +107,7 @@ export interface TextFolder {
   id?: number;
   name: string;
   addedAt: number;
+  parentFolderId?: number;
 }
 
 export interface FavoriteSite {
@@ -165,6 +166,14 @@ export interface CachedArticle {
   cachedAt: number;
 }
 
+export interface ReadingPosition {
+  /** Primary key — article URL or manual-text identifier (e.g. "manual::My Title"). */
+  url: string;
+  /** scrollTop / scrollHeight ratio (0–1) when user left the article. */
+  scrollRatio: number;
+  savedAt: number;
+}
+
 export class PolyglotDB extends Dexie {
   flashcards!: Table<Flashcard>;
   wordCounts!: Table<WordCount>;
@@ -180,6 +189,7 @@ export class PolyglotDB extends Dexie {
   users!: Table<User>;
   studySessions!: Table<StudySession>;
   textFolders!: Table<TextFolder>;
+  readingPositions!: Table<ReadingPosition>;
 
   constructor() {
     super('PolyglotContextReaderDB');
@@ -372,6 +382,41 @@ export class PolyglotDB extends Dexie {
       users: '++id, &email',
       studySessions: '++id, lang, start',
       textFolders: '++id, addedAt',
+    });
+    // Version 17: parentFolderId on textFolders for sub-folder support
+    this.version(17).stores({
+      flashcards: '++id, lang, word, nextReview, lemma',
+      wordCounts: 'langWord, lang, count',
+      appSettings: 'id',
+      customFeeds: '++id, lang',
+      bookmarks: '++id, url, lang',
+      manualTexts: '++id, lang, addedAt, folderId',
+      favoriteSites: '++id, lang',
+      translationCache: '++id, cacheKey',
+      knownWords: '++id, lang, word, confidence',
+      readingHistory: '++id, lang, readAt',
+      cachedArticles: '++id, url',
+      users: '++id, &email',
+      studySessions: '++id, lang, start',
+      textFolders: '++id, addedAt, parentFolderId',
+    });
+    // Version 18: readingPositions table — saves scroll position per article URL
+    this.version(18).stores({
+      flashcards: '++id, lang, word, nextReview, lemma',
+      wordCounts: 'langWord, lang, count',
+      appSettings: 'id',
+      customFeeds: '++id, lang',
+      bookmarks: '++id, url, lang',
+      manualTexts: '++id, lang, addedAt, folderId',
+      favoriteSites: '++id, lang',
+      translationCache: '++id, cacheKey',
+      knownWords: '++id, lang, word, confidence',
+      readingHistory: '++id, lang, readAt',
+      cachedArticles: '++id, url',
+      users: '++id, &email',
+      studySessions: '++id, lang, start',
+      textFolders: '++id, addedAt, parentFolderId',
+      readingPositions: 'url',
     });
   }
 }

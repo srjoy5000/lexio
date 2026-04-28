@@ -276,7 +276,6 @@ export function useWordTranslation(
         evictTranslationCache();
       }
       setTranslatedText(translationResult);
-      setTimeout(() => translationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 150);
     } catch (err) {
       console.error("[Reader] handleTranslateOnly:", err);
       setTranslationError("Translation failed. Check your network connection.");

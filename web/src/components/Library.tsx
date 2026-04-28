@@ -34,11 +34,16 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
   // ── Folder state ──────────────────────────────────────────────────────
   const [folders, setFolders] = useState<TextFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<number | null | "all">("all");
+  const [expandedFolderId, setExpandedFolderId] = useState<number | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderParentId, setNewFolderParentId] = useState<number | undefined>(undefined);
   const [newFolderName, setNewFolderName] = useState("");
   const [openMoveMenuId, setOpenMoveMenuId] = useState<number | null>(null);
+
+  // ── Drag-and-drop state ───────────────────────────────────────────────
+  const [dragOverFolderId, setDragOverFolderId] = useState<number | null | "unfiled">(null);
 
   useEffect(() => { loadTexts(); }, []);
 
@@ -48,6 +53,10 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
     setTexts(all);
     setFolders(allFolders);
   };
+
+  // ── Derived folder helpers ────────────────────────────────────────────
+  const topLevelFolders = folders.filter((f) => !f.parentFolderId);
+  const subFolders = (parentId: number) => folders.filter((f) => f.parentFolderId === parentId);
 
   const handleDeleteText = async (id?: number) => {
     if (!id) return;
@@ -87,9 +96,10 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
   const createFolder = async () => {
     const name = newFolderName.trim();
     if (!name) return;
-    await db.textFolders.add({ name, addedAt: Date.now() });
+    await db.textFolders.add({ name, addedAt: Date.now(), parentFolderId: newFolderParentId });
     setNewFolderName("");
     setShowNewFolderInput(false);
+    setNewFolderParentId(undefined);
     await loadTexts();
   };
 
@@ -102,11 +112,15 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
   };
 
   const deleteFolder = async (id: number) => {
-    if (!window.confirm("Delete this folder? Texts inside will become unfiled.")) return;
-    const textsInFolder = texts.filter((t) => t.folderId === id);
-    await Promise.all(textsInFolder.map((t) => db.manualTexts.update(t.id!, { folderId: undefined })));
-    await db.textFolders.delete(id);
-    if (selectedFolderId === id) setSelectedFolderId("all");
+    if (!window.confirm("Delete this folder? Sub-folders and their texts will become unfiled.")) return;
+    const idsToDelete = [id, ...folders.filter((f) => f.parentFolderId === id).map((f) => f.id!)];
+    const textsToUnfile = texts.filter((t) => t.folderId !== undefined && idsToDelete.includes(t.folderId));
+    await Promise.all(textsToUnfile.map((t) => db.manualTexts.update(t.id!, { folderId: undefined })));
+    await db.textFolders.bulkDelete(idsToDelete);
+    if (selectedFolderId !== "all" && selectedFolderId !== null && idsToDelete.includes(selectedFolderId as number)) {
+      setSelectedFolderId("all");
+    }
+    if (expandedFolderId !== null && idsToDelete.includes(expandedFolderId)) setExpandedFolderId(null);
     await loadTexts();
   };
 
@@ -122,6 +136,25 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [openMoveMenuId]);
+
+  // ── Drag-and-drop helpers ─────────────────────────────────────────────
+  const folderDropProps = (folderId: number | "unfiled") => ({
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
+    onDragEnter: (e: React.DragEvent) => { e.preventDefault(); setDragOverFolderId(folderId); },
+    onDragLeave: () => setDragOverFolderId(null),
+    onDrop: async (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOverFolderId(null);
+      const textId = Number(e.dataTransfer.getData("textId"));
+      if (!textId) return;
+      await moveText(textId, folderId === "unfiled" ? undefined : folderId);
+    },
+  });
+
+  const chipDragClass = (folderId: number | "unfiled") =>
+    dragOverFolderId === folderId
+      ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400"
+      : "";
 
   // ── Websites state ───────────────────────────────────────────────────
   const [newUrl, setNewUrl] = useState(() => localStorage.getItem("wb.newUrl") || "");
@@ -203,6 +236,28 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
 
   const changeTab = (t: Tab) => { setTab(t); localStorage.setItem("library.tab", t); setSearchQuery(""); };
 
+  // ── Shared chip input (renders at end of a chip row) ──────────────────
+  const NewFolderInput = () => (
+    <span className="flex items-center gap-1">
+      <input autoFocus value={newFolderName}
+        onChange={(e) => setNewFolderName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") createFolder();
+          if (e.key === "Escape") { setShowNewFolderInput(false); setNewFolderName(""); }
+        }}
+        placeholder={newFolderParentId !== undefined ? "Sub-folder name" : "Folder name"}
+        className="px-3 py-1.5 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-36" />
+      <button onClick={createFolder}
+        className="p-1.5 rounded-full bg-green-600 text-white hover:bg-green-700 transition-colors">
+        <Check size={12} />
+      </button>
+      <button onClick={() => { setShowNewFolderInput(false); setNewFolderName(""); }}
+        className="p-1.5 rounded-full bg-gray-200 dark:bg-dark-hover text-gray-600 dark:text-white hover:bg-gray-300 transition-colors">
+        <X size={12} />
+      </button>
+    </span>
+  );
+
   return (
     <div className="w-full min-h-screen bg-white dark:bg-dark-bg text-gray-900 dark:text-dark-text pb-16 transition-colors duration-200">
 
@@ -262,216 +317,307 @@ export default function Library({ onBack, onOpenText, onAddText }: LibraryProps)
         {/* ── Texts Tab ── */}
         {tab === "texts" && (
           <>
-          {/* Folder filter chips */}
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <button onClick={() => setSelectedFolderId("all")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
-                selectedFolderId === "all"
-                  ? "bg-green-600 text-white border-green-600"
-                  : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
-              }`}>
-              All <span className="text-[10px] font-black opacity-70">({texts.length})</span>
-            </button>
+            {/* ── Row 1: Top-level folder chips ── */}
+            <div className="flex flex-wrap items-center gap-2">
 
-            {folders.length > 0 && (
-              <button onClick={() => setSelectedFolderId(null)}
+              {/* All */}
+              <button
+                onClick={() => { setSelectedFolderId("all"); setExpandedFolderId(null); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
-                  selectedFolderId === null
+                  selectedFolderId === "all"
                     ? "bg-green-600 text-white border-green-600"
                     : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
                 }`}>
-                <Folder size={13} /> Unfiled
-                <span className="text-[10px] font-black opacity-70">({texts.filter((t) => !t.folderId).length})</span>
+                All <span className="text-[10px] font-black opacity-70">({texts.length})</span>
               </button>
-            )}
 
-            {folders.map((folder) =>
-              renamingFolderId === folder.id ? (
-                <span key={folder.id} className="flex items-center gap-1">
-                  <input autoFocus value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") renameFolder(folder.id!); if (e.key === "Escape") setRenamingFolderId(null); }}
-                    onBlur={() => renameFolder(folder.id!)}
-                    className="px-2 py-1 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-28" />
-                  <button onClick={() => setRenamingFolderId(null)}
-                    className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white">
-                    <X size={12} />
-                  </button>
-                </span>
-              ) : (
-                <span key={folder.id} className="relative flex items-center group">
-                  <button onClick={() => setSelectedFolderId(folder.id!)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
-                      selectedFolderId === folder.id
-                        ? "bg-green-600 text-white border-green-600"
-                        : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
-                    }`}>
-                    <FolderOpen size={13} />
-                    {folder.name}
-                    <span className="text-[10px] font-black opacity-70">({texts.filter((t) => t.folderId === folder.id).length})</span>
-                  </button>
-                  <span className="hidden group-hover:flex items-center gap-0.5 ml-0.5">
-                    <button title="Rename" onClick={() => { setRenamingFolderId(folder.id!); setRenameDraft(folder.name); }}
-                      className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors">
-                      <Pencil size={11} />
-                    </button>
-                    <button title="Delete folder" onClick={() => deleteFolder(folder.id!)}
-                      className="p-1 rounded-full text-gray-400 hover:text-red-500 transition-colors">
-                      <FolderX size={11} />
+              {/* Unfiled — drop target */}
+              {folders.length > 0 && (
+                <button
+                  onClick={() => { setSelectedFolderId(null); setExpandedFolderId(null); }}
+                  {...folderDropProps("unfiled")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                    selectedFolderId === null && expandedFolderId === null
+                      ? "bg-green-600 text-white border-green-600"
+                      : `bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400 ${chipDragClass("unfiled")}`
+                  }`}>
+                  <Folder size={13} /> Unfiled
+                  <span className="text-[10px] font-black opacity-70">({texts.filter((t) => !t.folderId).length})</span>
+                </button>
+              )}
+
+              {/* Top-level folder chips */}
+              {topLevelFolders.map((folder) =>
+                renamingFolderId === folder.id ? (
+                  <span key={folder.id} className="flex items-center gap-1">
+                    <input autoFocus value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") renameFolder(folder.id!); if (e.key === "Escape") setRenamingFolderId(null); }}
+                      onBlur={() => renameFolder(folder.id!)}
+                      className="px-2 py-1 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-28" />
+                    <button onClick={() => setRenamingFolderId(null)}
+                      className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white">
+                      <X size={12} />
                     </button>
                   </span>
-                </span>
-              )
-            )}
-
-            {showNewFolderInput ? (
-              <span className="flex items-center gap-1">
-                <input autoFocus value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") { setShowNewFolderInput(false); setNewFolderName(""); } }}
-                  placeholder="Folder name"
-                  className="px-3 py-1.5 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-36" />
-                <button onClick={createFolder}
-                  className="p-1.5 rounded-full bg-green-600 text-white hover:bg-green-700 transition-colors">
-                  <Check size={12} />
-                </button>
-                <button onClick={() => { setShowNewFolderInput(false); setNewFolderName(""); }}
-                  className="p-1.5 rounded-full bg-gray-200 dark:bg-dark-hover text-gray-600 dark:text-white hover:bg-gray-300 transition-colors">
-                  <X size={12} />
-                </button>
-              </span>
-            ) : (
-              <button onClick={() => setShowNewFolderInput(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border border-dashed border-gray-300 dark:border-dark-hover text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors">
-                <FolderPlus size={13} /> New Folder
-              </button>
-            )}
-          </div>
-
-          {filteredTexts.length === 0 ? (
-            <div className="rounded-3xl border border-gray-200 dark:border-dark-hover bg-gray-50 dark:bg-dark-surface p-12 text-center text-gray-500 dark:text-dark-muted">
-              {texts.length === 0
-                ? "No saved texts. Use \"Add Text\" or paste in the Reader to save."
-                : "No results."}
-            </div>
-          ) : (
-            filteredTexts.map((text) => (
-              <div key={text.id} className="rounded-2xl border border-gray-200 dark:border-dark-hover bg-white dark:bg-dark-surface shadow-sm">
-                {editingId === text.id ? (
-                  <div className="p-6 space-y-3">
-                    <input value={editState.title}
-                      onChange={(e) => setEditState((p) => ({ ...p, title: e.target.value }))}
-                      placeholder="Title"
-                      className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    <input value={editState.url}
-                      onChange={(e) => setEditState((p) => ({ ...p, url: e.target.value }))}
-                      placeholder="Source URL"
-                      className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    <textarea value={editState.body}
-                      onChange={(e) => setEditState((p) => ({ ...p, body: e.target.value }))}
-                      rows={5}
-                      className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                    />
-                    <div className="flex gap-2">
-                      <button onClick={() => saveEdit(text.id)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm">
-                        <Check size={15} /> Save
-                      </button>
-                      <button onClick={() => setEditingId(null)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-gray-200 dark:bg-dark-hover text-gray-700 dark:text-white rounded-lg font-bold text-sm">
-                        <X size={15} /> Cancel
-                      </button>
-                    </div>
-                  </div>
                 ) : (
-                  <div>
-                    <div className="p-5 pb-3">
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-bold text-lg text-gray-900 dark:text-white truncate">{text.title}</h3>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">
-                              {LANGUAGE_NAMES[text.lang as keyof typeof LANGUAGE_NAMES] || text.lang}
-                            </span>
-                            <span className="text-xs text-gray-400 dark:text-dark-muted">
-                              {new Date(text.addedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-                            </span>
-                            {text.url && (
-                              <a href={text.url} target="_blank" rel="noopener noreferrer"
-                                className="text-xs text-blue-500 hover:underline truncate max-w-[200px]">
-                                {text.url}
-                              </a>
-                            )}
+                  <span key={folder.id} className="relative flex items-center group">
+                    <button
+                      onClick={() => {
+                        setSelectedFolderId(folder.id!);
+                        setExpandedFolderId(expandedFolderId === folder.id ? null : folder.id!);
+                      }}
+                      {...folderDropProps(folder.id!)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                        dragOverFolderId === folder.id
+                          ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-600"
+                          : selectedFolderId === folder.id || expandedFolderId === folder.id
+                            ? "bg-green-600 text-white border-green-600"
+                            : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
+                      }`}>
+                      <FolderOpen size={13} />
+                      {folder.name}
+                      <span className="text-[10px] font-black opacity-70">({texts.filter((t) => t.folderId === folder.id).length})</span>
+                    </button>
+                    <span className="hidden group-hover:flex items-center gap-0.5 ml-0.5">
+                      <button title="Rename" onClick={() => { setRenamingFolderId(folder.id!); setRenameDraft(folder.name); }}
+                        className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors">
+                        <Pencil size={11} />
+                      </button>
+                      <button title="Delete folder" onClick={() => deleteFolder(folder.id!)}
+                        className="p-1 rounded-full text-gray-400 hover:text-red-500 transition-colors">
+                        <FolderX size={11} />
+                      </button>
+                    </span>
+                  </span>
+                )
+              )}
+
+              {/* New top-level folder */}
+              {showNewFolderInput && newFolderParentId === undefined
+                ? <NewFolderInput />
+                : (
+                  <button
+                    onClick={() => { setNewFolderParentId(undefined); setShowNewFolderInput(true); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border border-dashed border-gray-300 dark:border-dark-hover text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors">
+                    <FolderPlus size={13} /> New Folder
+                  </button>
+                )
+              }
+            </div>
+
+            {/* ── Row 2: Sub-folder chips (shown when a top-level folder is expanded) ── */}
+            {expandedFolderId !== null && (
+              <div className="flex flex-wrap items-center gap-2 pl-5 border-l-2 border-gray-200 dark:border-dark-hover">
+                {subFolders(expandedFolderId).map((sf) =>
+                  renamingFolderId === sf.id ? (
+                    <span key={sf.id} className="flex items-center gap-1">
+                      <input autoFocus value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") renameFolder(sf.id!); if (e.key === "Escape") setRenamingFolderId(null); }}
+                        onBlur={() => renameFolder(sf.id!)}
+                        className="px-2 py-1 text-sm border border-green-400 rounded-full outline-none bg-white dark:bg-dark-surface text-gray-900 dark:text-white w-28" />
+                      <button onClick={() => setRenamingFolderId(null)}
+                        className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white">
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ) : (
+                    <span key={sf.id} className="relative flex items-center group">
+                      <button
+                        onClick={() => setSelectedFolderId(sf.id!)}
+                        {...folderDropProps(sf.id!)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+                          dragOverFolderId === sf.id
+                            ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-600"
+                            : selectedFolderId === sf.id
+                              ? "bg-green-600 text-white border-green-600"
+                              : "bg-white dark:bg-dark-surface text-gray-600 dark:text-dark-muted border-gray-200 dark:border-dark-hover hover:border-green-400"
+                        }`}>
+                        <Folder size={12} />
+                        {sf.name}
+                        <span className="text-[10px] font-black opacity-70">({texts.filter((t) => t.folderId === sf.id).length})</span>
+                      </button>
+                      <span className="hidden group-hover:flex items-center gap-0.5 ml-0.5">
+                        <button title="Rename" onClick={() => { setRenamingFolderId(sf.id!); setRenameDraft(sf.name); }}
+                          className="p-1 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors">
+                          <Pencil size={11} />
+                        </button>
+                        <button title="Delete sub-folder" onClick={() => deleteFolder(sf.id!)}
+                          className="p-1 rounded-full text-gray-400 hover:text-red-500 transition-colors">
+                          <FolderX size={11} />
+                        </button>
+                      </span>
+                    </span>
+                  )
+                )}
+
+                {/* New sub-folder */}
+                {showNewFolderInput && newFolderParentId === expandedFolderId
+                  ? <NewFolderInput />
+                  : (
+                    <button
+                      onClick={() => { setNewFolderParentId(expandedFolderId); setShowNewFolderInput(true); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border border-dashed border-gray-300 dark:border-dark-hover text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors">
+                      <FolderPlus size={12} /> New Sub-folder
+                    </button>
+                  )
+                }
+              </div>
+            )}
+
+            {/* ── Text cards ── */}
+            {filteredTexts.length === 0 ? (
+              <div className="rounded-3xl border border-gray-200 dark:border-dark-hover bg-gray-50 dark:bg-dark-surface p-12 text-center text-gray-500 dark:text-dark-muted">
+                {texts.length === 0
+                  ? "No saved texts. Use \"Add Text\" or paste in the Reader to save."
+                  : "No results."}
+              </div>
+            ) : (
+              filteredTexts.map((text) => (
+                <div
+                  key={text.id}
+                  draggable={editingId !== text.id}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("textId", String(text.id));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  className={`rounded-2xl border border-gray-200 dark:border-dark-hover bg-white dark:bg-dark-surface shadow-sm transition-shadow ${editingId !== text.id ? "cursor-grab active:cursor-grabbing" : ""}`}>
+                  {editingId === text.id ? (
+                    <div className="p-6 space-y-3">
+                      <input value={editState.title}
+                        onChange={(e) => setEditState((p) => ({ ...p, title: e.target.value }))}
+                        placeholder="Title"
+                        className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <input value={editState.url}
+                        onChange={(e) => setEditState((p) => ({ ...p, url: e.target.value }))}
+                        placeholder="Source URL"
+                        className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <textarea value={editState.body}
+                        onChange={(e) => setEditState((p) => ({ ...p, body: e.target.value }))}
+                        rows={5}
+                        className="w-full p-3 bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-hover rounded-xl text-gray-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => saveEdit(text.id)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm">
+                          <Check size={15} /> Save
+                        </button>
+                        <button onClick={() => setEditingId(null)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-gray-200 dark:bg-dark-hover text-gray-700 dark:text-white rounded-lg font-bold text-sm">
+                          <X size={15} /> Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="p-5 pb-3">
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-bold text-lg text-gray-900 dark:text-white truncate">{text.title}</h3>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">
+                                {LANGUAGE_NAMES[text.lang as keyof typeof LANGUAGE_NAMES] || text.lang}
+                              </span>
+                              <span className="text-xs text-gray-400 dark:text-dark-muted">
+                                {new Date(text.addedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                              </span>
+                              {text.folderId && (
+                                <span className="text-[10px] bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                                  <Folder size={10} />
+                                  {folders.find((f) => f.id === text.folderId)?.name ?? "Folder"}
+                                </span>
+                              )}
+                              {text.url && (
+                                <a href={text.url} target="_blank" rel="noopener noreferrer"
+                                  className="text-xs text-blue-500 hover:underline truncate max-w-[200px]">
+                                  {text.url}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button onClick={() => startEdit(text)}
+                              className="p-2 rounded-xl bg-gray-100 dark:bg-dark-hover text-gray-500 hover:text-gray-700 dark:hover:text-white transition-colors">
+                              <Edit2 size={15} />
+                            </button>
+                            <button onClick={() => handleDeleteText(text.id)}
+                              className="p-2 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:text-red-700 transition-colors">
+                              <Trash2 size={15} />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex gap-1.5 flex-shrink-0">
-                          <button onClick={() => startEdit(text)}
-                            className="p-2 rounded-xl bg-gray-100 dark:bg-dark-hover text-gray-500 hover:text-gray-700 dark:hover:text-white transition-colors">
-                            <Edit2 size={15} />
-                          </button>
-                          <button onClick={() => handleDeleteText(text.id)}
-                            className="p-2 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:text-red-700 transition-colors">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 leading-relaxed">{text.body}</p>
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 leading-relaxed">{text.body}</p>
-                    </div>
-                    <div className="px-5 pb-4 flex items-center gap-2 flex-wrap">
-                      <button onClick={() => onOpenText(text.body, text.title, text.url)}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-all shadow-sm shadow-green-600/20">
-                        Open in Reader
-                      </button>
-
-                      {/* Move-to-folder dropdown */}
-                      <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => setOpenMoveMenuId(openMoveMenuId === text.id ? null : (text.id ?? null))}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 dark:bg-dark-hover text-gray-600 dark:text-dark-muted hover:text-gray-900 dark:hover:text-white rounded-lg text-sm font-bold transition-colors border border-gray-200 dark:border-dark-hover">
-                          <Folder size={13} />
-                          {text.folderId
-                            ? (folders.find((f) => f.id === text.folderId)?.name ?? "Folder")
-                            : "Move to"}
-                          <ChevronDown size={13} />
+                      <div className="px-5 pb-4 flex items-center gap-2 flex-wrap">
+                        <button onClick={() => onOpenText(text.body, text.title, text.url)}
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-all shadow-sm shadow-green-600/20">
+                          Open in Reader
                         </button>
 
-                        {openMoveMenuId === text.id && (
-                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-hover rounded-xl shadow-lg overflow-hidden">
-                            {text.folderId && (
-                              <button onClick={() => moveText(text.id!, undefined)}
-                                className="w-full text-left px-4 py-2.5 text-sm text-gray-600 dark:text-dark-muted hover:bg-gray-50 dark:hover:bg-dark-hover flex items-center gap-2 transition-colors">
-                                <FolderMinus size={13} /> Remove from folder
-                              </button>
-                            )}
-                            {folders.length > 0 && <hr className="border-gray-100 dark:border-dark-hover" />}
-                            {folders.map((folder) => (
-                              <button key={folder.id} onClick={() => moveText(text.id!, folder.id!)}
-                                className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
-                                  text.folderId === folder.id
-                                    ? "text-green-600 font-bold bg-green-50 dark:bg-green-900/10"
-                                    : "text-gray-700 dark:text-dark-text hover:bg-gray-50 dark:hover:bg-dark-hover"
-                                }`}>
-                                <FolderOpen size={13} />
-                                {folder.name}
-                                {text.folderId === folder.id && <Check size={12} className="ml-auto" />}
-                              </button>
-                            ))}
-                            {folders.length === 0 && (
-                              <div className="px-4 py-3 text-xs text-gray-400 dark:text-dark-muted italic">
-                                No folders yet — create one above
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        {/* Move-to-folder dropdown */}
+                        <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => setOpenMoveMenuId(openMoveMenuId === text.id ? null : (text.id ?? null))}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 dark:bg-dark-hover text-gray-600 dark:text-dark-muted hover:text-gray-900 dark:hover:text-white rounded-lg text-sm font-bold transition-colors border border-gray-200 dark:border-dark-hover">
+                            <Folder size={13} />
+                            {text.folderId
+                              ? (folders.find((f) => f.id === text.folderId)?.name ?? "Folder")
+                              : "Move to"}
+                            <ChevronDown size={13} />
+                          </button>
+
+                          {openMoveMenuId === text.id && (
+                            <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-hover rounded-xl shadow-lg">
+                              {text.folderId && (
+                                <button onClick={() => moveText(text.id!, undefined)}
+                                  className="w-full text-left px-4 py-2.5 text-sm text-gray-600 dark:text-dark-muted hover:bg-gray-50 dark:hover:bg-dark-hover flex items-center gap-2 transition-colors">
+                                  <FolderMinus size={13} /> Remove from folder
+                                </button>
+                              )}
+                              {topLevelFolders.length > 0 && <hr className="border-gray-100 dark:border-dark-hover" />}
+                              {topLevelFolders.map((folder) => (
+                                <div key={folder.id}>
+                                  <button onClick={() => moveText(text.id!, folder.id!)}
+                                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                                      text.folderId === folder.id
+                                        ? "text-green-600 font-bold bg-green-50 dark:bg-green-900/10"
+                                        : "text-gray-700 dark:text-dark-text hover:bg-gray-50 dark:hover:bg-dark-hover"
+                                    }`}>
+                                    <FolderOpen size={13} />
+                                    {folder.name}
+                                    {text.folderId === folder.id && <Check size={12} className="ml-auto" />}
+                                  </button>
+                                  {subFolders(folder.id!).map((sf) => (
+                                    <button key={sf.id} onClick={() => moveText(text.id!, sf.id!)}
+                                      className={`w-full text-left pl-8 pr-4 py-2 text-sm flex items-center gap-2 transition-colors ${
+                                        text.folderId === sf.id
+                                          ? "text-green-600 font-bold bg-green-50 dark:bg-green-900/10"
+                                          : "text-gray-600 dark:text-dark-muted hover:bg-gray-50 dark:hover:bg-dark-hover"
+                                      }`}>
+                                      <Folder size={12} />
+                                      {sf.name}
+                                      {text.folderId === sf.id && <Check size={12} className="ml-auto" />}
+                                    </button>
+                                  ))}
+                                </div>
+                              ))}
+                              {topLevelFolders.length === 0 && (
+                                <div className="px-4 py-3 text-xs text-gray-400 dark:text-dark-muted italic">
+                                  No folders yet — create one above
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
+                  )}
+                </div>
+              ))
+            )}
           </>
         )}
 

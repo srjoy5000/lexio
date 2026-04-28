@@ -59,17 +59,9 @@ textarea:focus {
   overflow: hidden;
 }
 
-/* Hover scale-up without layout shift.
-   inline-block + vertical-align:baseline keeps punctuation on the same baseline.
-   transform:scale affects only visual rendering — surrounding text never reflows. */
 .word-hover {
   display: inline-block;
   vertical-align: baseline;
-  transition: transform 0.1s ease;
-  transform-origin: center bottom;
-}
-.word-hover:hover {
-  transform: scale(1.05);
 }
 
 /* Flashcard entrance animation */
